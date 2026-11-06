@@ -1,0 +1,15 @@
+{
+  "name": "cv-generator",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Generate CV documents from private data and public examples",
+  "scripts": {
+    "cv": "node src/build.js",
+    "build:all": "node src/build-all.js",
+    "lint:cv": "node src/lint.js",
+    "test": "node --test jobs/"
+  },
+  "dependencies": {
+    "docx": "^9.15.1"
+  }
+}

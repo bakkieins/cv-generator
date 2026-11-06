@@ -1,0 +1,11 @@
+node_modules/
+output/
+*.docx
+*.pdf
+preview*.png
+CLAUDE.local.md
+private/
+applications/*
+!applications/README.md
+.setup-backup/
+.DS_Store
