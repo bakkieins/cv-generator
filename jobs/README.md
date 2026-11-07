@@ -9,7 +9,8 @@ Scannt werktags zu festen Zeiten (Mo–Sa 07:30, Mo–Fr zusätzlich 13:30 und 2
 3. `prompts/score.md`: Bewertung mit Sonnet. Nur Rolle (40) und Skills (60) zählen, der Standort nicht. Knockouts aus der privaten Konfiguration ergeben 0.
 4. Ab der Schwelle: `applications/<slug>/job.md` anlegen, dann `prompts/tailor.md` mit Opus (data.js, Build, Lint). Scheitert der Build an Seitenzahl oder Lint, folgt eine Rettungsrunde mit `prompts/fix.md`.
 5. Unabhängiger Review mit dem Subagent `cv-reviewer` (`.claude/agents/cv-reviewer.md`, Opus, nur lesend). Ohne Freigabe eine Korrekturrunde (`prompts/fix.md`) und ein zweiter Review. Ohne Freigabe kein PDF-Anhang, die Funde stehen in Mail und `job.md`.
-6. Mail über Gmail SMTP, Passwort aus dem macOS-Schlüsselbund. Bleibt der erste Lauf eines Tages ohne Treffer, kommt eine Statusmail mit den drei besten Scores seit der letzten Mail, damit Funkstille nie „Scanner steht“ bedeuten kann.
+6. Mail über Gmail SMTP, Passwort aus dem macOS-Schlüsselbund. Bleibt der erste Lauf eines Tages ohne Treffer, kommt eine Statusmail mit den besten Scores seit der letzten Mail, damit Funkstille nie „Scanner steht“ bedeuten kann. Jede Stelle trägt eine feste Nummer (J12). Unter der Schwelle stehen die drei besten und alle ab `listMinScore` in der Mail.
+7. CV auf Zuruf (`replies.js`): Eine Antwort auf eine Scanner-Mail mit Nummern („J12, J15“) löst für diese Stellen Tailoring und Review aus, auch unter der Schwelle. Das Ergebnis kommt als Antwort im selben Thread, freigegebene PDFs im Anhang. Gelesen werden nur Antworten von der Empfängeradresse mit gültiger DKIM-Signatur ihrer Domain, nur der eigene Text über dem Zitat zählt. Höchstens `maxRequestsPerRun` CVs pro Lauf, der Rest bleibt in der Warteschlange. Ein eigener LaunchAgent prüft alle 10 Minuten.
 
 ## Dateien
 
@@ -19,10 +20,11 @@ Scannt werktags zu festen Zeiten (Mo–Sa 07:30, Mo–Fr zusätzlich 13:30 und 2
 | `sources.js` | Feeds der ATS und Jobbörsen |
 | `filter.js` | Vorfilter ohne KI |
 | `alerts.js` | Alert-Mails per IMAP, Parser je Absender, Suche der Originalanzeige |
+| `replies.js` | Antworten auf Scanner-Mails per IMAP, Stellennummern und Signatur prüfen |
 | `pipeline.js` | Claude-Schritte: Bewerten, Tailoring, Rettungsrunde, Review, Korrektur |
 | `claude.js` | Aufruf von `claude -p`, Prompt-Vorlagen, JSON-Schemas |
 | `dossier.js` | Akte `applications/<slug>/job.md`, Slug und CV-Dateiname |
-| `report.js` | Text der Treffer- und der Statusmail |
+| `report.js` | Text der Treffer-, Status- und Antwortmail |
 | `mail.js` | Versand über Gmail SMTP |
 
 ## Befehle
@@ -31,9 +33,10 @@ Scannt werktags zu festen Zeiten (Mo–Sa 07:30, Mo–Fr zusätzlich 13:30 und 2
 node jobs/scan.js --dry-run              # nur laden und filtern, ohne Claude
 node jobs/scan.js --score-only --limit=3 # bewerten und ausgeben, State bleibt unverändert
 node jobs/scan.js --test-mail            # Mailversand prüfen
+node jobs/scan.js --replies              # nur Antworten mit angeforderten CVs abarbeiten
 node jobs/scan.js --threshold=60 --no-mail
-jobs/install-launchd.sh                  # zu festen Uhrzeiten einplanen
+jobs/install-launchd.sh                  # zu festen Uhrzeiten einplanen, Antworten alle 10 Minuten
 jobs/install-launchd.sh uninstall
 ```
 
-State und Log liegen in `private/jobs-state/` (`seen.json`, `scores.jsonl` zum Justieren der Schwelle, `alerts.json` mit verarbeiteten Mails und gefundenen Boards je Firma, `scan.log`).
+State und Log liegen in `private/jobs-state/` (`seen.json`, `scores.jsonl` zum Justieren der Schwelle, `alerts.json` mit verarbeiteten Mails und gefundenen Boards je Firma, `requests.json` mit Stellennummern und Warteschlange, `candidates.json` mit den Score-Ergebnissen der letzten 60 Tage, `scan.log`).

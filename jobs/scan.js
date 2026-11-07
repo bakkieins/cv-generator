@@ -5,9 +5,10 @@ const { fetchSource, loadDescription } = require("./sources");
 const { sendMail } = require("./mail");
 const { prefilter, matchesCompany, passesTitle, passesLocation, titleKey } = require("./filter");
 const { readAlerts, snippetExclusion } = require("./alerts");
+const { readReplies } = require("./replies");
 const { scoreJob, tailorAndReview } = require("./pipeline");
 const { slugify, writeJobFile } = require("./dossier");
-const { matchMail, statusMail } = require("./report");
+const { matchMail, statusMail, requestMail } = require("./report");
 const log = require("./log");
 
 const ROOT = path.join(__dirname, "..");
@@ -17,6 +18,11 @@ const SCORES_PATH = path.join(STATE_DIR, "scores.jsonl");
 const LOCK_PATH = path.join(STATE_DIR, "scan.lock");
 const LAST_ERROR_MAIL_PATH = path.join(STATE_DIR, "last-error-mail");
 const LAST_MAIL_PATH = path.join(STATE_DIR, "last-mail");
+// Nummern (J12) der Stellen in den Mails, Warteschlange der per Antwort angeforderten CVs.
+const REQUESTS_PATH = path.join(STATE_DIR, "requests.json");
+// Bewertete Stellen samt Score-Ergebnis, damit ein angeforderter CV ohne erneute Bewertung entsteht.
+const CANDIDATES_PATH = path.join(STATE_DIR, "candidates.json");
+const KEEP_DAYS = 60;
 
 const args = process.argv.slice(2);
 const option = (name) => args.find((arg) => arg.startsWith(`--${name}=`))?.split("=")[1];
@@ -24,6 +30,8 @@ const DRY_RUN = args.includes("--dry-run");
 const NO_MAIL = args.includes("--no-mail");
 // Nur bewerten und ausgeben, kein Tailoring, kein Mail, State bleibt unverändert.
 const SCORE_ONLY = args.includes("--score-only");
+// Nur Antworten auf Scanner-Mails abarbeiten (eigener, häufiger LaunchAgent).
+const REPLIES_ONLY = args.includes("--replies");
 const LIMIT = Number(option("limit")) || null;
 
 function loadConfig() {
@@ -49,6 +57,10 @@ function readJson(file, fallback) {
   return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : fallback;
 }
 
+const writeJson = (file, value) => fs.writeFileSync(file, JSON.stringify(value, null, 2));
+const recent = (record) => Date.now() - Date.parse(record.at) < KEEP_DAYS * 24 * 60 * 60 * 1000;
+const keepRecent = (map) => Object.fromEntries(Object.entries(map).filter(([, record]) => recent(record)));
+
 function acquireLock() {
   if (fs.existsSync(LOCK_PATH)) {
     const pid = Number(fs.readFileSync(LOCK_PATH, "utf8"));
@@ -60,6 +72,15 @@ function acquireLock() {
     }
   }
   fs.writeFileSync(LOCK_PATH, String(process.pid));
+  return true;
+}
+
+// Geplante Läufe warten, statt auszufallen, wenn gerade angeforderte CVs entstehen.
+async function waitForLock(maxMinutes) {
+  for (let waited = 0; !acquireLock(); waited += 0.5) {
+    if (waited >= maxMinutes) return false;
+    await new Promise((resolve) => setTimeout(resolve, 30_000));
+  }
   return true;
 }
 
@@ -83,8 +104,8 @@ async function fetchAll(sources) {
 
 async function main() {
   fs.mkdirSync(STATE_DIR, { recursive: true });
-  if (!DRY_RUN && !acquireLock()) {
-    log("Vorheriger Lauf läuft noch, überspringe.");
+  if (!DRY_RUN && !(REPLIES_ONLY ? acquireLock() : await waitForLock(60))) {
+    if (!REPLIES_ONLY) log("Vorheriger Lauf läuft noch, überspringe.");
     return;
   }
 
@@ -95,6 +116,9 @@ async function main() {
     return;
   }
   const seen = readJson(SEEN_PATH, {});
+  const candidatesStore = readJson(CANDIDATES_PATH, {});
+  if (!DRY_RUN && !SCORE_ONLY) handleReplies(config, seen, candidatesStore);
+  if (REPLIES_ONLY) return;
   const alerts = await readAlertsSafely(config);
   const { unique, candidates } = prefilter([...(await fetchAll(config.sources)), ...alerts.jobs], config, seen);
   log(`${unique.length} Stellen geladen, ${candidates.length} neue Kandidaten nach Vorfilter.`);
@@ -128,6 +152,8 @@ async function main() {
       continue;
     }
     fs.appendFileSync(SCORES_PATH, `${JSON.stringify({ ...record, breakdown: result.breakdown, verdict: result.verdict, costUSD: result.costUSD })}\n`);
+    const { key, company, title, location, salary, url, source, postedAt } = job;
+    candidatesStore[job.key] = { job: { key, company, title, location, salary, url, source, postedAt }, result, at: record.at };
 
     if (result.score < config.threshold) {
       seen[job.key] = record;
@@ -139,7 +165,7 @@ async function main() {
     job.slug = slugify(`${job.company}-${job.title}`);
     writeJobFile(job, result);
     const { tailor, review } = tailorAndReview(job, result, config);
-    seen[job.key] = { ...record, slug: job.slug, tailor: tailor.status };
+    seen[job.key] = { ...record, slug: job.slug, tailor: tailor.status, ...(tailor.status === "ready" ? { pdf: tailor.pdfPath } : {}) };
     matches.push({ job, result, tailor, review, flagged: matchesCompany(job.company, config.flagCompanies) });
     log(`→ Ergebnis ${tailor.status}: ${tailor.pdfPath || tailor.notes}`);
   }
@@ -150,7 +176,8 @@ async function main() {
   if (mailing) {
     for (const entry of alerts.unresolved) seen[alertKey(entry)] = { key: alertKey(entry), titleKey: titleKey(entry), company: entry.company, title: entry.title, url: entry.url, at: new Date().toISOString() };
   }
-  fs.writeFileSync(SEEN_PATH, JSON.stringify(seen, null, 2));
+  writeJson(SEEN_PATH, seen);
+  writeJson(CANDIDATES_PATH, keepRecent(candidatesStore));
   if (!mailing) return;
 
   sendRunMail({ matches, toCheck, loaded: unique.length, candidates: candidates.length, config });
@@ -159,19 +186,126 @@ async function main() {
 
 function sendRunMail({ matches, toCheck, loaded, candidates, config }) {
   const lastMail = fs.existsSync(LAST_MAIL_PATH) ? Number(fs.readFileSync(LAST_MAIL_PATH, "utf8")) : Date.now() - 24 * 60 * 60 * 1000;
+  // Stellen über der Schwelle waren schon in einer Treffer-Mail oder kommen im nächsten Lauf.
+  const requests = readRequests();
+  const scored = readScoresSince(lastMail)
+    .filter((record) => record.score < config.threshold)
+    .map((record) => ({ ...record, ref: assignRef(requests, record) }));
+  const numbered = matches.map((match) => ({ ...match, ref: assignRef(requests, { ...match.job, score: match.result.score }) }));
+  const list = { scored, threshold: config.threshold, listMinScore: config.listMinScore };
   if (matches.length) {
-    sendMail(config.mail, matchMail(matches, toCheck), STATE_DIR);
+    sendMail(config.mail, matchMail(numbered, toCheck, list), STATE_DIR);
     log(`Mail mit ${matches.length} Treffer(n) verschickt.`);
   } else if (toCheck.length || new Date(lastMail).toDateString() !== new Date().toDateString()) {
     // Erster Lauf des Tages ohne Treffer: Lebenszeichen statt Funkstille.
-    // Stellen über der Schwelle waren schon in einer Treffer-Mail oder kommen im nächsten Lauf.
-    const scored = readScoresSince(lastMail).filter((record) => record.score < config.threshold);
-    sendMail(config.mail, statusMail({ loaded, candidates, scored, threshold: config.threshold, alerts: toCheck }), STATE_DIR);
+    sendMail(config.mail, statusMail({ loaded, candidates, ...list, alerts: toCheck }), STATE_DIR);
     log(`Statusmail verschickt (${scored.length} bewertet seit der letzten Mail, ${toCheck.length} zum Selbstprüfen).`);
   } else {
     return;
   }
+  writeJson(REQUESTS_PATH, { ...requests, refs: keepRecent(requests.refs) });
   fs.writeFileSync(LAST_MAIL_PATH, String(Date.now()));
+}
+
+function readRequests() {
+  return readJson(REQUESTS_PATH, { nextRef: 1, refs: {}, queue: [], processedUids: [] });
+}
+
+// Eine Stelle behält ihre Nummer über alle Mails hinweg.
+function assignRef(requests, { key, company, title, url, score }) {
+  const existing = Object.entries(requests.refs).find(([, entry]) => entry.key === key);
+  if (existing) return Number(existing[0]);
+  const ref = requests.nextRef;
+  requests.nextRef += 1;
+  requests.refs[ref] = { key, company, title, url, score, at: new Date().toISOString() };
+  return ref;
+}
+
+// Antworten mit Stellennummern lesen, in die Warteschlange stellen und höchstens `maxRequestsPerRun` CVs bauen.
+// Die Warteschlange liegt auf der Platte, damit ein Absturz keine Anforderung verliert.
+function handleReplies(config, seen, candidatesStore) {
+  if (!config.alerts || !config.mail || NO_MAIL) return;
+  const requests = readRequests();
+  let replies;
+  try {
+    replies = readReplies(config, requests.processedUids);
+  } catch (error) {
+    log(`⚠ Antworten nicht gelesen: ${error.message}`);
+    return;
+  }
+  for (const reply of replies) {
+    requests.processedUids = [...requests.processedUids, reply.uid].slice(-200);
+    if (!reply.signed) {
+      log(`⚠ Antwort ohne gültige Signatur ignoriert: ${reply.subject}`);
+      continue;
+    }
+    const queued = new Set(requests.queue.flatMap((item) => item.refs));
+    const known = reply.refs.filter((ref) => requests.refs[ref] && !queued.has(ref));
+    const unknown = reply.refs.filter((ref) => !requests.refs[ref]);
+    log(`Antwort erhalten: ${reply.refs.map((ref) => `J${ref}`).join(", ") || "keine Stellennummer"}`);
+    if (known.length) requests.queue.push({ refs: known, unknown, messageId: reply.messageId, subject: reply.subject });
+    else {
+      const pending = reply.refs.filter((ref) => queued.has(ref));
+      sendMail(config.mail, { ...requestMail({ subject: reply.subject, results: [], unknown, queued: pending }), inReplyTo: reply.messageId }, STATE_DIR);
+    }
+  }
+  writeJson(REQUESTS_PATH, requests);
+
+  let budget = config.maxRequestsPerRun;
+  while (budget > 0 && requests.queue.length) {
+    const item = requests.queue[0];
+    const now = item.refs.slice(0, budget);
+    const later = item.refs.slice(budget);
+    budget -= now.length;
+    const results = now.map((ref) => fulfil(ref, requests.refs[ref], config, seen, candidatesStore));
+    sendMail(config.mail, { ...requestMail({ subject: item.subject, results, unknown: item.unknown, queued: later }), inReplyTo: item.messageId }, STATE_DIR);
+    log(`Mail mit ${results.length} angeforderten CV(s) verschickt.`);
+    if (later.length) requests.queue[0] = { ...item, refs: later, unknown: [] };
+    else requests.queue.shift();
+    writeJson(REQUESTS_PATH, requests);
+    writeJson(SEEN_PATH, seen);
+    writeJson(CANDIDATES_PATH, keepRecent(candidatesStore));
+  }
+}
+
+// Ein angeforderter CV. Wirft nie: Fehler landen wie beim Scan im Status und damit in der Mail.
+function fulfil(ref, entry, config, seen, candidatesStore) {
+  const done = seen[entry.key];
+  let candidate = candidatesStore[entry.key];
+  try {
+    if (!candidate) {
+      // Vor der Einführung der Anforderungen bewertet: neu bewerten, die Anzeige liest der Score-Schritt über den Link.
+      const job = { key: entry.key, company: entry.company, title: entry.title, url: entry.url, location: "", salary: "", postedAt: "unbekannt", description: "" };
+      candidate = { job, result: scoreJob(job, config), at: new Date().toISOString() };
+      candidatesStore[entry.key] = candidate;
+    }
+  } catch (error) {
+    log(`⚠ Neubewertung fehlgeschlagen für ${entry.company} · ${entry.title}: ${error.message}`);
+    const job = { company: entry.company, title: entry.title, url: entry.url, slug: done?.slug ?? "" };
+    const result = { score: entry.score, verdict: "nicht neu bewertet", gaps: [], liveVerified: false };
+    return { ref, job, result, tailor: { status: "failed", pdfPath: "", openQuestions: [], notes: error.message.slice(0, 300) }, review: null };
+  }
+
+  const job = { ...candidate.job, slug: done?.slug ?? slugify(`${candidate.job.company}-${candidate.job.title}`) };
+  const { result } = candidate;
+  const flagged = matchesCompany(job.company, config.flagCompanies);
+  if (done?.pdf && fs.existsSync(done.pdf)) {
+    return { ref, job, result, flagged, tailor: { status: "ready", pdfPath: done.pdf, openQuestions: [], notes: "" }, review: null };
+  }
+
+  log(`Angefordert: J${ref} · ${job.company} · ${job.title} (${result.score})`);
+  // Eine schon angelegte Akte (z. B. von Hand ergänzt) nicht überschreiben.
+  if (!fs.existsSync(path.join(ROOT, "applications", job.slug, "job.md"))) writeJobFile(job, result);
+  const { tailor, review } = tailorAndReview(job, result, config);
+  log(`→ Ergebnis ${tailor.status}: ${tailor.pdfPath || tailor.notes}`);
+  seen[entry.key] = {
+    ...(done ?? { key: entry.key, company: job.company, title: job.title, url: job.url, score: result.score, at: new Date().toISOString() }),
+    slug: job.slug,
+    tailor: tailor.status,
+    requested: true,
+    ...(tailor.status === "ready" ? { pdf: tailor.pdfPath } : {}),
+  };
+  return { ref, job, result, tailor, review, flagged };
 }
 
 const NO_ALERTS = { mails: 0, jobs: [], unresolved: [], commit() {} };

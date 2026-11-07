@@ -1,19 +1,23 @@
 #!/bin/zsh
-# Richtet den Job-Scanner als LaunchAgent ein (feste Uhrzeiten, siehe calendar_entries).
+# Richtet den Job-Scanner als LaunchAgent ein (feste Uhrzeiten, siehe calendar_entries),
+# dazu einen zweiten, der alle 10 Minuten Antworten mit angeforderten CVs abarbeitet.
 # Aufruf: jobs/install-launchd.sh            installieren bzw. aktualisieren
 #         jobs/install-launchd.sh uninstall  entfernen
 set -euo pipefail
 
 LABEL="com.benbackwinkel.cv-jobscan"
+REPLIES_LABEL="$LABEL-replies"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+AGENTS="$HOME/Library/LaunchAgents"
 LOG="$ROOT/private/jobs-state/scan.log"
 DOMAIN="gui/$(id -u)"
 
-launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
+for label in "$LABEL" "$REPLIES_LABEL"; do
+  launchctl bootout "$DOMAIN/$label" 2>/dev/null || true
+done
 
 if [[ "${1:-}" == "uninstall" ]]; then
-  rm -f "$PLIST"
+  rm -f "$AGENTS/$LABEL.plist" "$AGENTS/$REPLIES_LABEL.plist"
   echo "Job-Scanner entfernt."
   exit 0
 fi
@@ -41,32 +45,40 @@ for tool in node claude soffice pdfinfo pdftotext; do
   dir="$(dirname "$bin")"
   [[ ":$TOOL_PATH:" == *":$dir:"* ]] || TOOL_PATH="${TOOL_PATH:+$TOOL_PATH:}$dir"
 done
-cat > "$PLIST" <<EOF
+# write_agent <label> <Zeitplan als plist-XML> [Argument für scan.js]
+write_agent() {
+  local plist="$AGENTS/$1.plist"
+  cat > "$plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>$LABEL</string>
+  <key>Label</key><string>$1</string>
   <key>ProgramArguments</key>
   <array>
     <string>$(command -v node)</string>
-    <string>$ROOT/jobs/scan.js</string>
+    <string>$ROOT/jobs/scan.js</string>${3:+
+    <string>$3</string>}
   </array>
   <key>WorkingDirectory</key><string>$ROOT</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key><string>$TOOL_PATH:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
-  <key>StartCalendarInterval</key>
-  <array>
-$(calendar_entries)
-  </array>
-  <key>RunAtLoad</key><true/>
+$2
   <key>StandardOutPath</key><string>$LOG</string>
   <key>StandardErrorPath</key><string>$LOG</string>
 </dict>
 </plist>
 EOF
+  launchctl bootstrap "$DOMAIN" "$plist"
+}
 
-launchctl bootstrap "$DOMAIN" "$PLIST"
-echo "Job-Scanner aktiv: Mo–Sa 07:30, Mo–Fr zusätzlich 13:30 und 21:30. Log: $LOG"
+write_agent "$LABEL" "  <key>StartCalendarInterval</key>
+  <array>
+$(calendar_entries)
+  </array>
+  <key>RunAtLoad</key><true/>"
+# Antworten alle 10 Minuten. Läuft gerade ein Scan, arbeitet der die Antworten gleich mit ab.
+write_agent "$REPLIES_LABEL" "  <key>StartInterval</key><integer>600</integer>" --replies
+echo "Job-Scanner aktiv: Mo–Sa 07:30, Mo–Fr zusätzlich 13:30 und 21:30, Antworten alle 10 Minuten. Log: $LOG"

@@ -4,6 +4,10 @@ module.exports = {
   maxAgeDays: 14,
   maxScoresPerRun: 20,
   maxTailorsPerRun: 3,
+  // Per Antwort angeforderte CVs pro Lauf, der Rest folgt im nächsten Lauf.
+  maxRequestsPerRun: 3,
+  // Stellen unter der Schwelle stehen ab diesem Score mit Nummer in der Mail, mindestens die drei besten.
+  listMinScore: 50,
   salaryFloorEUR: null,
   // Persönliche Score-Regeln bleiben privat (private/jobs.config.js): wie Standort und Arbeitsmodell zählen,
   // zusätzliche Knockouts für den Score-Prompt und Muster für klare Ausschlüsse aus Alert-Mails.

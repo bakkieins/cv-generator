@@ -186,4 +186,4 @@ async function readAlerts(config, stateDir) {
   };
 }
 
-module.exports = { readAlerts, plainText, parseHiringCafe, slugCandidates, snippetExclusion };
+module.exports = { readAlerts, plainText, parseHiringCafe, slugCandidates, snippetExclusion, imap, imapDate };

@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { cvLine, matchMail, statusMail } = require("./report");
+const { cvLine, matchMail, statusMail, requestMail } = require("./report");
 const { slugify } = require("./dossier");
 
 const match = (company, tailor, review = null) => ({
@@ -48,4 +48,29 @@ test("Statusmail nennt die drei besten Scores, auch ohne Bewertung", () => {
   const empty = statusMail({ loaded: 100, candidates: 0, scored: [], threshold: 75 });
   assert.equal(empty.subject, "Job-Scanner: keine Treffer");
   assert.match(empty.text, /keine neue Stelle bewertet/);
+});
+
+test("Stellen unter der Schwelle stehen mit Nummer in der Mail, die drei besten und alle ab listMinScore", () => {
+  const scored = [40, 66, 12, 60, 50, 55].map((score, i) => ({ ref: i + 1, score, company: `Firma${i}`, title: "PM", url: `https://example.com/${i}` }));
+  const mail = statusMail({ loaded: 10, candidates: 6, scored, threshold: 75, listMinScore: 50 });
+  assert.deepEqual([...mail.text.matchAll(/^ {2}J(\d+) · (\d+) ·/gm)].map((m) => Number(m[2])), [66, 60, 55, 50]);
+  assert.match(mail.text, /auf diese Mail antworten.*„J12“/);
+
+  const withMatch = matchMail([{ ...match("Acme", { status: "ready" }), ref: 7 }], [], { scored, threshold: 75, listMinScore: 60 });
+  assert.match(withMatch.text, /■ J7 · Acme/);
+  assert.match(withMatch.text, /Unter der Schwelle 75 \(6 bewertet/);
+  assert.deepEqual([...withMatch.text.matchAll(/^ {2}J\d+ · (\d+) ·/gm)].map((m) => Number(m[1])), [66, 60, 55]);
+});
+
+test("Antwort auf eine Anforderung bleibt im Thread und nennt unbekannte und wartende Nummern", () => {
+  const mail = requestMail({ subject: "Re: Job-Scanner: keine Treffer", results: [{ ...match("Acme", { status: "ready" }), ref: 3 }], unknown: [99], queued: [4] });
+  assert.equal(mail.subject, "Re: Job-Scanner: keine Treffer");
+  assert.match(mail.text, /angeforderte CVs: 1, davon 1/);
+  assert.match(mail.text, /Unbekannte Nummer: J99/);
+  assert.match(mail.text, /kommt mit der nächsten Mail: J4/);
+  assert.match(mail.text, /■ J3 · Acme/);
+
+  const empty = requestMail({ subject: "Job-Scanner: 1 von 1 CVs bereit", results: [] });
+  assert.equal(empty.subject, "Re: Job-Scanner: 1 von 1 CVs bereit");
+  assert.match(empty.text, /keine Stellennummer gefunden/);
 });

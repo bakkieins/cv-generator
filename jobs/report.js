@@ -3,6 +3,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const notKept = (review) => review.review.filter((r) => r.verdict !== "behalten");
+const refLabel = (ref) => (ref ? `J${ref} · ` : "");
+const REPLY_HINT = "Für einen CV zu einer Stelle, auch unter der Schwelle, einfach auf diese Mail antworten und die Nummer nennen, z. B. „J12“ oder „J12, J15“.";
 
 function cvLine(tailor, review) {
   if (tailor.status === "ready") return `✓ angehängt, vom Review freigegeben (${path.basename(tailor.pdfPath)})`;
@@ -12,9 +14,9 @@ function cvLine(tailor, review) {
   return `✗ KEIN CV ANGEHÄNGT. Grund: ${reason}`;
 }
 
-function matchBlock({ job, result, tailor, review, flagged }) {
+function matchBlock({ ref, job, result, tailor, review, flagged }) {
   return [
-    `■ ${job.company} · ${job.title}  (${result.score}/100)`,
+    `■ ${refLabel(ref)}${job.company} · ${job.title}  (${result.score}/100)`,
     flagged ? "  ⚠ Firma steht schon im Bewerbungsstand, vorher prüfen" : null,
     `  Ort: ${job.location || "keine Angabe"}${job.salary ? ` · Gehalt: ${job.salary}` : ""}`,
     `  Link: ${job.url}${result.liveVerified ? "" : " (nicht live verifiziert)"}`,
@@ -41,7 +43,22 @@ function alertSection(entries) {
   return `\nAus Alert-Mails, Originalanzeige auf keiner bekannten Karriereseite gefunden (${entries.length}). Ohne Score und ohne CV, bitte selbst prüfen:\n\n${entries.map(block).join("\n\n")}\n`;
 }
 
-function matchMail(matches, alerts = []) {
+// Bewertete Stellen unter der Schwelle, mit Nummer zum Anfordern eines CV. Mindestens die drei besten,
+// dazu alle ab `listMinScore`.
+function belowList(scored, listMinScore) {
+  const sorted = [...scored].sort((a, b) => b.score - a.score);
+  return sorted.filter((record, index) => index < 3 || record.score >= listMinScore);
+}
+
+const belowLine = (r) => `  ${refLabel(r.ref)}${r.score} · ${r.company} · ${r.title}\n       ${r.url}`;
+
+function belowSection(scored, threshold, listMinScore) {
+  const list = belowList(scored, listMinScore);
+  if (!list.length) return "";
+  return `\nUnter der Schwelle ${threshold} (${scored.length} bewertet seit der letzten Mail):\n\n${list.map(belowLine).join("\n")}\n`;
+}
+
+function matchMail(matches, alerts = [], { scored = [], threshold, listMinScore } = {}) {
   const ready = matches.filter((m) => m.tailor.status === "ready");
   const missing = matches.filter((m) => m.tailor.status !== "ready");
   const intro = [
@@ -49,24 +66,41 @@ function matchMail(matches, alerts = []) {
     missing.length
       ? `Ohne CV: ${missing.map((m) => m.job.company).join(", ")}. Zum Nachbessern in Claude Code im cv-generator sagen: „CV für applications/<Akte> nachbessern“.`
       : null,
+    REPLY_HINT,
   ].filter(Boolean).join("\n");
   return {
     subject: `Job-Scanner: ${ready.length} von ${matches.length} CVs bereit (${matches.map((m) => m.job.company).join(", ")})`,
-    text: `Hi Ben,\n\n${intro}\n\n${matches.map(matchBlock).join("\n\n")}\n${alertSection(alerts)}`,
+    text: `Hi Ben,\n\n${intro}\n\n${matches.map(matchBlock).join("\n\n")}\n${belowSection(scored, threshold, listMinScore)}${alertSection(alerts)}`,
     attachments: ready.map((m) => m.tailor.pdfPath).filter((file) => fs.existsSync(file)),
   };
 }
 
 // Lebenszeichen am Tag ohne Treffer: zeigt, dass der Scanner läuft und wie knapp die besten Stellen lagen.
-function statusMail({ loaded, candidates, scored, threshold, alerts = [] }) {
-  const top = [...scored].sort((a, b) => b.score - a.score).slice(0, 3);
-  const best = top.length
-    ? `Die besten Scores seit der letzten Mail (${scored.length} bewertet):\n\n${top.map((r) => `  ${r.score} · ${r.company} · ${r.title}\n       ${r.url}`).join("\n")}`
+function statusMail({ loaded, candidates, scored, threshold, listMinScore, alerts = [] }) {
+  const list = belowList(scored, listMinScore);
+  const best = list.length
+    ? `Die besten Scores seit der letzten Mail (${scored.length} bewertet):\n\n${list.map(belowLine).join("\n")}\n\n${REPLY_HINT}`
     : "Seit der letzten Mail wurde keine neue Stelle bewertet.";
   return {
-    subject: `Job-Scanner: keine Treffer${top.length ? ` (bester Score ${top[0].score})` : ""}${alerts.length ? `, ${alerts.length} zum Selbstprüfen` : ""}`,
+    subject: `Job-Scanner: keine Treffer${list.length ? ` (bester Score ${list[0].score})` : ""}${alerts.length ? `, ${alerts.length} zum Selbstprüfen` : ""}`,
     text: `Hi Ben,\n\nseit der letzten Mail keine Stelle über der Schwelle ${threshold}. Der Scanner läuft: Im letzten Lauf ${loaded} Stellen geladen, ${candidates} neue Kandidaten nach Vorfilter.\n\n${best}\n${alertSection(alerts)}`,
   };
 }
 
-module.exports = { cvLine, matchMail, statusMail };
+// Antwort auf eine Anforderung per Mail, im selben Thread. `unknown`: Nummern ohne bekannte Stelle.
+function requestMail({ subject, results, unknown = [], queued = [] }) {
+  const ready = results.filter((m) => m.tailor.status === "ready");
+  const intro = [
+    results.length ? `angeforderte CVs: ${results.length}, davon ${ready.length} vom Review freigegeben im Anhang. Beworben wurde noch nichts.` : null,
+    unknown.length ? `Unbekannte Nummer${unknown.length > 1 ? "n" : ""}: ${unknown.map((ref) => `J${ref}`).join(", ")}. Die Nummern stehen in den Scanner-Mails vor jeder Stelle.` : null,
+    queued.length ? `Noch in Arbeit, kommt mit der nächsten Mail: ${queued.map((ref) => `J${ref}`).join(", ")}.` : null,
+    !results.length && !unknown.length && !queued.length ? `in deiner Antwort habe ich keine Stellennummer gefunden. ${REPLY_HINT}` : null,
+  ].filter(Boolean).join("\n");
+  return {
+    subject: /^re:/i.test(subject) ? subject : `Re: ${subject}`,
+    text: `Hi Ben,\n\n${intro}\n\n${results.map(matchBlock).join("\n\n")}\n`,
+    attachments: ready.map((m) => m.tailor.pdfPath).filter((file) => fs.existsSync(file)),
+  };
+}
+
+module.exports = { cvLine, matchMail, statusMail, requestMail };

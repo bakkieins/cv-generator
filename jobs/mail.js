@@ -19,7 +19,7 @@ function keychainPassword({ keychainService, from }) {
 const encodeHeader = (value) => `=?UTF-8?B?${Buffer.from(value).toString("base64")}?=`;
 const wrap = (base64) => base64.replace(/.{76}/g, "$&\r\n");
 
-function buildMessage({ from, to, subject, text, attachments = [] }) {
+function buildMessage({ from, to, subject, text, attachments = [], inReplyTo }) {
   const boundary = `jobscan-${Date.now().toString(36)}`;
   const parts = [
     [
@@ -45,6 +45,8 @@ function buildMessage({ from, to, subject, text, attachments = [] }) {
     `To: ${to}`,
     `Subject: ${encodeHeader(subject)}`,
     `Date: ${new Date().toUTCString()}`,
+    // Antworten auf Anforderungen landen im selben Thread.
+    ...(inReplyTo ? [`In-Reply-To: ${inReplyTo}`, `References: ${inReplyTo}`] : []),
     "MIME-Version: 1.0",
     `Content-Type: multipart/mixed; boundary="${boundary}"`,
     "",
