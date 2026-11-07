@@ -230,7 +230,8 @@ function handleReplies(config, seen, candidatesStore) {
   try {
     replies = readReplies(config, requests.processedUids);
   } catch (error) {
-    log(`⚠ Antworten nicht gelesen: ${error.message}`);
+    // Der häufige Antwort-Lauf schweigt (z. B. offline nach dem Aufwachen), der geplante Scan meldet es.
+    if (!REPLIES_ONLY) log(`⚠ Antworten nicht gelesen: ${error.message}`);
     return;
   }
   for (const reply of replies) {

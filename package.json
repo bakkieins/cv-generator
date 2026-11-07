@@ -7,7 +7,8 @@
     "cv": "node src/build.js",
     "build:all": "node src/build-all.js",
     "lint:cv": "node src/lint.js",
-    "test": "node --test jobs/"
+    "test": "node --test jobs/",
+    "backup": "src/backup.sh"
   },
   "dependencies": {
     "docx": "^9.15.1"

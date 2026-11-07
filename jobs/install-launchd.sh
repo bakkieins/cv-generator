@@ -1,6 +1,6 @@
 #!/bin/zsh
 # Richtet den Job-Scanner als LaunchAgent ein (feste Uhrzeiten, siehe calendar_entries),
-# dazu einen zweiten, der alle 10 Minuten Antworten mit angeforderten CVs abarbeitet.
+# dazu einen zweiten, der alle 2 Minuten Antworten mit angeforderten CVs abarbeitet.
 # Aufruf: jobs/install-launchd.sh            installieren bzw. aktualisieren
 #         jobs/install-launchd.sh uninstall  entfernen
 set -euo pipefail
@@ -79,6 +79,6 @@ write_agent "$LABEL" "  <key>StartCalendarInterval</key>
 $(calendar_entries)
   </array>
   <key>RunAtLoad</key><true/>"
-# Antworten alle 10 Minuten. Läuft gerade ein Scan, arbeitet der die Antworten gleich mit ab.
-write_agent "$REPLIES_LABEL" "  <key>StartInterval</key><integer>600</integer>" --replies
-echo "Job-Scanner aktiv: Mo–Sa 07:30, Mo–Fr zusätzlich 13:30 und 21:30, Antworten alle 10 Minuten. Log: $LOG"
+# Antworten alle 2 Minuten: eine IMAP-Suche, ohne Antwort kein Claude-Aufruf. Läuft gerade ein Scan, arbeitet der die Antworten gleich mit ab.
+write_agent "$REPLIES_LABEL" "  <key>StartInterval</key><integer>120</integer>" --replies
+echo "Job-Scanner aktiv: Mo–Sa 07:30, Mo–Fr zusätzlich 13:30 und 21:30, Antworten alle 2 Minuten. Log: $LOG"
