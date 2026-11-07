@@ -5,7 +5,7 @@ const { fetchSource, loadDescription } = require("./sources");
 const { sendMail } = require("./mail");
 const { prefilter, matchesCompany, passesTitle, passesLocation, titleKey } = require("./filter");
 const { readAlerts, snippetExclusion } = require("./alerts");
-const { readReplies } = require("./replies");
+const { readReplies, pickJobs } = require("./replies");
 const { scoreJob, tailorAndReview } = require("./pipeline");
 const { slugify, writeJobFile } = require("./dossier");
 const { matchMail, statusMail, requestMail } = require("./report");
@@ -239,14 +239,18 @@ function handleReplies(config, seen, candidatesStore) {
       log(`⚠ Antwort ohne gültige Signatur ignoriert: ${reply.subject}`);
       continue;
     }
+    // Ohne Nummern (z. B. Antwort auf eine ältere Mail): Stellen über die Links im Zitat erkennen.
+    const picked = reply.refs.length ? null : pickJobs(reply, readScoresSince(0));
+    const refs = picked ? picked.chosen.map((record) => assignRef(requests, record)) : reply.refs;
+    const choices = picked && !refs.length ? picked.offered.map((record) => ({ ...record, ref: assignRef(requests, record) })) : [];
     const queued = new Set(requests.queue.flatMap((item) => item.refs));
-    const known = reply.refs.filter((ref) => requests.refs[ref] && !queued.has(ref));
-    const unknown = reply.refs.filter((ref) => !requests.refs[ref]);
-    log(`Antwort erhalten: ${reply.refs.map((ref) => `J${ref}`).join(", ") || "keine Stellennummer"}`);
+    const known = refs.filter((ref) => requests.refs[ref] && !queued.has(ref));
+    const unknown = refs.filter((ref) => !requests.refs[ref]);
+    log(`Antwort erhalten: ${refs.map((ref) => `J${ref}`).join(", ") || `keine Stellennummer, ${choices.length} Stellen im Zitat`}`);
     if (known.length) requests.queue.push({ refs: known, unknown, messageId: reply.messageId, subject: reply.subject });
     else {
-      const pending = reply.refs.filter((ref) => queued.has(ref));
-      sendMail(config.mail, { ...requestMail({ subject: reply.subject, results: [], unknown, queued: pending }), inReplyTo: reply.messageId }, STATE_DIR);
+      const pending = refs.filter((ref) => queued.has(ref));
+      sendMail(config.mail, { ...requestMail({ subject: reply.subject, results: [], unknown, queued: pending, choices }), inReplyTo: reply.messageId }, STATE_DIR);
     }
   }
   writeJson(REQUESTS_PATH, requests);

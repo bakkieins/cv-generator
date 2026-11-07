@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { parseReply, extractRefs, decodeHeader } = require("./replies");
+const { parseReply, pickJobs, extractRefs, decodeHeader } = require("./replies");
 
 // Fiktive Gmail-Antwort auf eine Scanner-Mail: eigener Text, Zitatzeile, zitierte Mail mit weiteren Nummern.
 const reply = (authResults) => [
@@ -49,4 +49,35 @@ test("Nummern brauchen das J, Datum und Uhrzeit zählen nicht", () => {
 test("Betreff in Base64 wird dekodiert", () => {
   const encoded = `=?UTF-8?B?${Buffer.from("Re: Job-Scanner: 1 von 2 CVs bereit (Café)").toString("base64")}?=`;
   assert.equal(decodeHeader(encoded), "Re: Job-Scanner: 1 von 2 CVs bereit (Café)");
+});
+
+// Antwort auf eine Statusmail aus der Zeit vor den Nummern.
+const oldMailReply = (own) => ({
+  own,
+  urls: [
+    "https://www.arbeitnow.com/jobs/companies/augustus/product-manager-berlin-199266",
+    "https://jobs.ashbyhq.com/acme/1",
+    "https://hiring.cafe/job/unbewertet",
+  ],
+});
+const records = [
+  { key: "a", company: "Augustus", title: "Product Manager", url: "https://www.arbeitnow.com/jobs/companies/augustus/product-manager-berlin-199266", score: 66 },
+  { key: "b", company: "Acme GmbH", title: "Senior PM", url: "https://jobs.ashbyhq.com/acme/1", score: 60 },
+  { key: "c", company: "Globex", title: "PM", url: "https://example.com/globex", score: 70 },
+];
+
+test("Alte Mail ohne Nummern: Firmenname oder Link im eigenen Text wählt die Stelle", () => {
+  assert.deepEqual(pickJobs(oldMailReply("Augustus bitte"), records).chosen.map((r) => r.key), ["a"]);
+  assert.deepEqual(pickJobs(oldMailReply("die hier: https://jobs.ashbyhq.com/acme/1."), records).chosen.map((r) => r.key), ["b"]);
+  // Globex steht nicht in der zitierten Mail, die unbewertete Stelle nicht in den Scores.
+  const none = pickJobs(oldMailReply("Globex und die erste"), records);
+  assert.deepEqual(none.chosen, []);
+  assert.deepEqual(none.offered.map((r) => r.key), ["a", "b"]);
+});
+
+test("Zitat-Links werden aus der Mail gelesen, der eigene Text getrennt", () => {
+  const eml = reply("dkim=pass header.i=@example.com").replace(">   J13 · 60 · Acme · Senior PM", ">        https://jobs.ashbyhq.com/acme/1");
+  const parsed = parseReply(eml, "ben@example.com");
+  assert.ok(parsed.urls.includes("https://jobs.ashbyhq.com/acme/1"));
+  assert.doesNotMatch(parsed.own, /ashbyhq/);
 });

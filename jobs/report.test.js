@@ -74,3 +74,10 @@ test("Antwort auf eine Anforderung bleibt im Thread und nennt unbekannte und war
   assert.equal(empty.subject, "Re: Job-Scanner: 1 von 1 CVs bereit");
   assert.match(empty.text, /keine Stellennummer gefunden/);
 });
+
+test("Antwort ohne bestimmte Stelle bietet die Stellen aus dem Zitat mit Nummer an", () => {
+  const mail = requestMail({ subject: "Re: Job-Scanner: keine Treffer", results: [], choices: [{ ref: 120, score: 66, company: "Augustus", title: "PM", url: "https://example.com/a" }] });
+  assert.match(mail.text, /zu welcher Stelle.*„J120“/);
+  assert.match(mail.text, /J120 · 66 · Augustus/);
+  assert.doesNotMatch(mail.text, /keine Stellennummer gefunden/);
+});

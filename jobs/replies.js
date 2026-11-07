@@ -1,5 +1,6 @@
 // Antworten auf Scanner-Mails: Wer mit Stellennummern (z. B. „J12, J15“) antwortet, bekommt dafür einen CV,
-// auch unter der Schwelle. Gelesen wird nur, was von der eigenen Empfängeradresse kommt und von deren
+// auch unter der Schwelle. Ältere Mails ohne Nummern gehen auch: Dann zählen Firmenname oder Link im eigenen
+// Text, sonst kommt eine Auswahl der Stellen aus dem Zitat zurück. Gelesen wird nur, was von der eigenen Empfängeradresse kommt und von deren
 // Mailanbieter signiert ist (DKIM), damit Fremde keine Tailoring-Läufe auslösen.
 const { imap, imapDate, plainText } = require("./alerts");
 
@@ -35,6 +36,23 @@ function extractRefs(body) {
   return [...new Set([...ownText(body).matchAll(REF)].map((match) => Number(match[1])))];
 }
 
+const URL_PATTERN = /https?:\/\/[^\s<>"']+/g;
+const urlsIn = (text) => [...new Set((text.match(URL_PATTERN) ?? []).map((url) => url.replace(/[.,;:)]+$/, "")))];
+const NOT_A_NAME = new Set(["gmbh", "inc", "ltd", "llc", "the", "group"]);
+const nameWord = (company) => company.toLowerCase().split(/[^\p{L}\p{N}]+/u).find((word) => word.length >= 3 && !NOT_A_NAME.has(word));
+
+// Antwort auf eine ältere Mail ohne Nummern: Die Stellen stehen als Links im Zitat.
+// `offered` sind alle bewerteten Stellen aus der zitierten Mail. `chosen` sind die, die der eigene Text
+// per Link oder Firmenname meint.
+function pickJobs(reply, records) {
+  const byUrl = new Map(records.map((record) => [record.url, record]));
+  const offered = reply.urls.map((url) => byUrl.get(url)).filter(Boolean);
+  const ownUrls = urlsIn(reply.own);
+  const ownWords = new Set(reply.own.toLowerCase().split(/[^\p{L}\p{N}]+/u));
+  const chosen = offered.filter((record) => ownUrls.includes(record.url) || ownWords.has(nameWord(record.company)));
+  return { offered, chosen };
+}
+
 function signedBy(eml, address) {
   const domain = address.split("@")[1].replace(/\./g, "\\.");
   return new RegExp(`dkim=pass\\s+header\\.i=@${domain}(?=[\\s;]|$)`, "i").test(header(eml, "Authentication-Results"));
@@ -47,6 +65,8 @@ function parseReply(eml, address) {
     subject: decodeHeader(header(eml, "Subject")),
     signed: signedBy(eml, address),
     refs: extractRefs(body),
+    own: ownText(body),
+    urls: urlsIn(body),
   };
 }
 
@@ -60,4 +80,4 @@ function readReplies(config, processedUids) {
     .map((uid) => ({ uid, ...parseReply(imap(config, `${config.alerts.imapUrl};UID=${uid}`), config.mail.to) }));
 }
 
-module.exports = { readReplies, parseReply, extractRefs, decodeHeader };
+module.exports = { readReplies, parseReply, pickJobs, extractRefs, decodeHeader };
