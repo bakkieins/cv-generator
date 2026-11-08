@@ -26,13 +26,15 @@ mkdir -p "$ROOT/private/jobs-state" "$HOME/Library/LaunchAgents"
 
 # Feste Uhrzeiten (Ortszeit) nach der Auswertung vom 03.11.2026: Stellen erscheinen werktags in zwei Wellen,
 # gegen 11 Uhr (Europa) und 14 bis 21 Uhr (USA), am Wochenende praktisch nie.
-# 07:30 Mo–Sa fängt die US-Welle vom Vortag, 13:30 die europäische, 21:30 die US-Welle. Sonntag frei.
+# 07:30 Mo–Sa fängt die US-Welle vom Vortag, 13:30 die europäische, 21:30 die US-Welle.
+# Sonntag 21:30 dazu (08.11.2026), damit das Wochenende nicht ganz still bleibt.
 # Verpasste Termine im Ruhezustand holt launchd beim Aufwachen nach.
 calendar_entries() {
   local day time
-  for day in 1 2 3 4 5 6; do
+  for day in 0 1 2 3 4 5 6; do
     for time in 7:30 13:30 21:30; do
       [[ $day == 6 && $time != 7:30 ]] && continue
+      [[ $day == 0 && $time != 21:30 ]] && continue
       echo "    <dict><key>Weekday</key><integer>$day</integer><key>Hour</key><integer>${time%:*}</integer><key>Minute</key><integer>${time#*:}</integer></dict>"
     done
   done
@@ -81,4 +83,4 @@ $(calendar_entries)
   <key>RunAtLoad</key><true/>"
 # Antworten alle 2 Minuten: eine IMAP-Suche, ohne Antwort kein Claude-Aufruf. Läuft gerade ein Scan, arbeitet der die Antworten gleich mit ab.
 write_agent "$REPLIES_LABEL" "  <key>StartInterval</key><integer>120</integer>" --replies
-echo "Job-Scanner aktiv: Mo–Sa 07:30, Mo–Fr zusätzlich 13:30 und 21:30, Antworten alle 2 Minuten. Log: $LOG"
+echo "Job-Scanner aktiv: Mo–Sa 07:30, Mo–Fr zusätzlich 13:30 und 21:30, So 21:30, Antworten alle 2 Minuten. Log: $LOG"

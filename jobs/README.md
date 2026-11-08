@@ -1,6 +1,6 @@
 # Job-Scanner
 
-Scannt werktags zu festen Zeiten (Mo–Sa 07:30, Mo–Fr zusätzlich 13:30 und 21:30, abgestimmt auf die Veröffentlichungswellen aus Europa und den USA) Karriereseiten (Greenhouse, Ashby, Lever, SmartRecruiters, Personio), die Jobsuche der Bundesagentur für Arbeit und die offene API von Arbeitnow, bewertet neue Stellen mit Claude nach fachlichem Fit (0 bis 100) und baut für Treffer über der Schwelle einen getailorten CV. Treffer kommen per Mail mit PDF im Anhang. Beworben wird nie automatisch.
+Scannt zu festen Zeiten (Mo–Sa 07:30, Mo–Fr zusätzlich 13:30 und 21:30, So 21:30, abgestimmt auf die Veröffentlichungswellen aus Europa und den USA) Karriereseiten (Greenhouse, Ashby, Lever, SmartRecruiters, Personio), die Jobsuche der Bundesagentur für Arbeit und die offene API von Arbeitnow, bewertet neue Stellen mit Claude nach fachlichem Fit (0 bis 100) und baut für Treffer über der Schwelle einen getailorten CV. Treffer kommen per Mail mit PDF im Anhang. Beworben wird nie automatisch.
 
 ## Ablauf
 
