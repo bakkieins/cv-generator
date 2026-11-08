@@ -18,6 +18,7 @@ const SCORES_PATH = path.join(STATE_DIR, "scores.jsonl");
 const LOCK_PATH = path.join(STATE_DIR, "scan.lock");
 const LAST_ERROR_MAIL_PATH = path.join(STATE_DIR, "last-error-mail");
 const LAST_MAIL_PATH = path.join(STATE_DIR, "last-mail");
+const LAST_SCAN_PATH = path.join(STATE_DIR, "last-scan.json");
 // Nummern (J12) der Stellen in den Mails, Warteschlange der per Antwort angeforderten CVs.
 const REQUESTS_PATH = path.join(STATE_DIR, "requests.json");
 // Bewertete Stellen samt Score-Ergebnis, damit ein angeforderter CV ohne erneute Bewertung entsteht.
@@ -122,6 +123,7 @@ async function main() {
   const alerts = await readAlertsSafely(config);
   const { unique, candidates } = prefilter([...(await fetchAll(config.sources)), ...alerts.jobs], config, seen);
   log(`${unique.length} Stellen geladen, ${candidates.length} neue Kandidaten nach Vorfilter.`);
+  if (!DRY_RUN && !SCORE_ONLY) writeJson(LAST_SCAN_PATH, { at: new Date().toISOString(), loaded: unique.length, candidates: candidates.length });
   const toCheck = alertsToCheck(alerts.unresolved, config, seen);
   if (alerts.mails) {
     log(`Alert-Mails: ${alerts.mails}, davon ${alerts.jobs.length} Stellen auf Karriereseiten gefunden, ${toCheck.length} zum Selbstprüfen.`);
@@ -207,6 +209,16 @@ function sendRunMail({ matches, toCheck, loaded, candidates, config }) {
   fs.writeFileSync(LAST_MAIL_PATH, String(Date.now()));
 }
 
+// Lebenszeichen für Antworten ohne Auftrag, z. B. die Frage, warum keine Mail kam.
+function scannerStatus(config) {
+  const last = readJson(LAST_SCAN_PATH, null);
+  const when = last && new Date(last.at).toLocaleString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "Europe/Berlin" });
+  return [
+    last ? `Der Scanner läuft. Letzter Scan: ${when}, ${last.loaded} Stellen geladen, ${last.candidates} neue Kandidaten.` : null,
+    config.scheduleNote ? `Scans: ${config.scheduleNote}. Ohne Treffer kommt höchstens eine Statusmail pro Tag.` : null,
+  ].filter(Boolean).join("\n");
+}
+
 function readRequests() {
   return readJson(REQUESTS_PATH, { nextRef: 1, refs: {}, queue: [], processedUids: [] });
 }
@@ -243,7 +255,9 @@ function handleReplies(config, seen, candidatesStore) {
     // Ohne Nummern (z. B. Antwort auf eine ältere Mail): Stellen über die Links im Zitat erkennen.
     const picked = reply.refs.length ? null : pickJobs(reply, readScoresSince(0));
     const refs = picked ? picked.chosen.map((record) => assignRef(requests, record)) : reply.refs;
-    const choices = picked && !refs.length ? picked.offered.map((record) => ({ ...record, ref: assignRef(requests, record) })) : [];
+    // Stellen mit fertigem CV nicht erneut anbieten: Eine Rückfrage auf eine CV-Mail ist keine neue Anforderung.
+    const open = picked && !refs.length ? picked.offered.filter((record) => !seen[record.key]?.pdf) : [];
+    const choices = open.map((record) => ({ ...record, ref: assignRef(requests, record) }));
     const queued = new Set(requests.queue.flatMap((item) => item.refs));
     const known = refs.filter((ref) => requests.refs[ref] && !queued.has(ref));
     const unknown = refs.filter((ref) => !requests.refs[ref]);
@@ -251,7 +265,7 @@ function handleReplies(config, seen, candidatesStore) {
     if (known.length) requests.queue.push({ refs: known, unknown, messageId: reply.messageId, subject: reply.subject });
     else {
       const pending = refs.filter((ref) => queued.has(ref));
-      sendMail(config.mail, { ...requestMail({ subject: reply.subject, results: [], unknown, queued: pending, choices }), inReplyTo: reply.messageId }, STATE_DIR);
+      sendMail(config.mail, { ...requestMail({ subject: reply.subject, results: [], unknown, queued: pending, choices, status: scannerStatus(config) }), inReplyTo: reply.messageId }, STATE_DIR);
     }
   }
   writeJson(REQUESTS_PATH, requests);

@@ -81,3 +81,11 @@ test("Antwort ohne bestimmte Stelle bietet die Stellen aus dem Zitat mit Nummer 
   assert.match(mail.text, /J120 · 66 · Augustus/);
   assert.doesNotMatch(mail.text, /keine Stellennummer gefunden/);
 });
+
+test("Antwort ohne Auftrag nennt den Status des Scanners", () => {
+  const mail = requestMail({ subject: "Re: Job-Scanner: x", results: [], status: "Der Scanner läuft. Letzter Scan: Sa., 07.11., 11:17" });
+  assert.match(mail.text, /keine Stellennummer gefunden/);
+  assert.match(mail.text, /Der Scanner läuft\. Letzter Scan/);
+  const withCv = requestMail({ subject: "Re: x", results: [{ ...match("Acme", { status: "ready" }), ref: 1 }], status: "Der Scanner läuft." });
+  assert.doesNotMatch(withCv.text, /Der Scanner läuft/);
+});

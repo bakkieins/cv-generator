@@ -89,7 +89,8 @@ function statusMail({ loaded, candidates, scored, threshold, listMinScore, alert
 
 // Antwort auf eine Anforderung per Mail, im selben Thread. `unknown`: Nummern ohne bekannte Stelle.
 // `choices`: Stellen aus der zitierten Mail, wenn die Antwort keine bestimmte Stelle nennt.
-function requestMail({ subject, results, unknown = [], queued = [], choices = [] }) {
+// `status`: Lebenszeichen des Scanners für Antworten ohne fertigen CV.
+function requestMail({ subject, results, unknown = [], queued = [], choices = [], status = "" }) {
   const ready = results.filter((m) => m.tailor.status === "ready");
   const intro = [
     results.length ? `angeforderte CVs: ${results.length}, davon ${ready.length} vom Review freigegeben im Anhang. Beworben wurde noch nichts.` : null,
@@ -97,6 +98,7 @@ function requestMail({ subject, results, unknown = [], queued = [], choices = []
     queued.length ? `Noch in Arbeit, kommt mit der nächsten Mail: ${queued.map((ref) => `J${ref}`).join(", ")}.` : null,
     choices.length ? `zu welcher Stelle soll ich den CV bauen? Antworte auf diese Mail mit der Nummer, z. B. „J${choices[0].ref}“, oder mehreren.\n\n${choices.map(belowLine).join("\n")}` : null,
     !results.length && !unknown.length && !queued.length && !choices.length ? `in deiner Antwort habe ich keine Stellennummer gefunden. ${REPLY_HINT}` : null,
+    !results.length && status ? `\n${status}` : null,
   ].filter(Boolean).join("\n");
   return {
     subject: /^re:/i.test(subject) ? subject : `Re: ${subject}`,

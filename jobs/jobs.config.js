@@ -8,6 +8,8 @@ module.exports = {
   maxRequestsPerRun: 3,
   // Stellen unter der Schwelle stehen ab diesem Score mit Nummer in der Mail, mindestens die drei besten.
   listMinScore: 50,
+  // Zeitplan in Worten für Antwortmails, wie in jobs/install-launchd.sh eingerichtet.
+  scheduleNote: "Mo–Sa 07:30, Mo–Fr zusätzlich 13:30 und 21:30",
   salaryFloorEUR: null,
   // Persönliche Score-Regeln bleiben privat (private/jobs.config.js): wie Standort und Arbeitsmodell zählen,
   // zusätzliche Knockouts für den Score-Prompt und Muster für klare Ausschlüsse aus Alert-Mails.
