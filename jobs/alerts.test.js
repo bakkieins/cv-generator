@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { plainText, parseHiringCafe, slugCandidates, snippetExclusion } = require("./alerts");
+const { plainText, parseHiringCafe, parseLinkedIn, slugCandidates, snippetExclusion } = require("./alerts");
 
 // Fiktive Mail im Aufbau der hiring.cafe-Sammelmail (Text-Teil quoted-printable).
 const EML = [
@@ -91,5 +91,40 @@ test("Suchname auch ohne Einrückung, Fußzeile beendet die letzte Stelle", () =
   const [entry, ...rest] = parseHiringCafe(text);
   assert.equal(entry.search, "Payments PM");
   assert.equal(entry.summary, "Requires 6+ years.");
+  assert.equal(rest.length, 0);
+});
+
+test("LinkedIn-Alert ergibt je Stelle Titel, Firma, Ort, Suche und einen Link ohne Token", () => {
+  const text = [
+    "Ihre Jobbenachrichtigung für Produktmanager in Köln            ",
+    "Senior Product Manager, Billing (m/w/d)",
+    "Initech",
+    "Köln",
+    "",
+    "Dieses Unternehmen ist aktiv auf Personalsuche.",
+    "Jobangebot ansehen: https://www.linkedin.com/comm/jobs/view/1234567/?trackingId=abc&otpToken=geheim",
+    "",
+    "---------------------------------------------------------",
+    "",
+    "Product Owner",
+    "Globex",
+    "Deutschland",
+    "Jobangebot ansehen: https://www.linkedin.com/comm/jobs/view/7654321/?otpToken=geheim",
+    "",
+    "Diese E-Mail wurde an Sie gesendet.",
+  ].join("\r\n");
+  const [first, second, ...rest] = parseLinkedIn(text);
+  assert.deepEqual(first, {
+    title: "Senior Product Manager, Billing (m/w/d)",
+    search: "Produktmanager",
+    company: "Initech",
+    location: "Köln",
+    salary: "",
+    summary: "",
+    url: "https://www.linkedin.com/jobs/view/1234567/",
+    via: "LinkedIn",
+  });
+  assert.equal(second.company, "Globex");
+  assert.equal(second.location, "Deutschland");
   assert.equal(rest.length, 0);
 });

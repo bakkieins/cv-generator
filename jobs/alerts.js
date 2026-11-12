@@ -1,4 +1,4 @@
-// Alert-Mails von Jobbörsen (bisher hiring.cafe) aus dem Scanner-Postfach lesen.
+// Alert-Mails von Jobbörsen (hiring.cafe, LinkedIn) aus dem Scanner-Postfach lesen.
 // Die Börse selbst wird nie aufgerufen: Jede Stelle wird auf der Karriereseite der Firma gesucht.
 const fs = require("node:fs");
 const path = require("node:path");
@@ -68,7 +68,35 @@ function parseHiringCafe(text) {
   return entries.filter((e) => e.company);
 }
 
-const PARSERS = { "hiring.cafe": parseHiringCafe };
+// Aufbau: Kopfzeile mit Suche und Ort, dann je Stelle Titel, Firma, Ort, optionale Hinweise und „Jobangebot ansehen: <Link>“.
+// Hinweise wie „aktiv auf Personalsuche“ sind keine Stellenbeschreibung und bleiben draußen.
+function parseLinkedIn(text) {
+  const entries = [];
+  let search = "";
+  let block = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    const header = line.match(/^(?:Ihre Jobbenachrichtigung für|Your job alert for)\s+(.+?)(?:\s+in\s+.+)?$/i);
+    const link = line.match(/^(?:Jobangebot ansehen|View job):\s*(\S+)/i);
+    if (header) {
+      search = header[1];
+      block = [];
+    } else if (link) {
+      const [title, company, location = ""] = block;
+      // Nur die Stellen-ID behalten: Der Link in der Mail enthält ein Login-Token.
+      const id = link[1].match(/\/jobs\/view\/(\d+)/)?.[1];
+      if (title && company) {
+        entries.push({ title, search, company, location, salary: "", summary: "", url: id ? `https://www.linkedin.com/jobs/view/${id}/` : "", via: "LinkedIn" });
+      }
+      block = [];
+    } else if (line && !/^[-=_—]+$/.test(line)) {
+      block.push(line);
+    }
+  }
+  return entries;
+}
+
+const PARSERS = { "hiring.cafe": parseHiringCafe, "jobalerts-noreply@linkedin.com": parseLinkedIn };
 
 function slugCandidates(company) {
   const base = company.toLowerCase().replace(/\.(com|io|ai|de)$/, "").replace(/[,.]?\s+(inc|gmbh|ltd|llc|group|ag|se)\.?$/, "").trim();
@@ -186,4 +214,4 @@ async function readAlerts(config, stateDir) {
   };
 }
 
-module.exports = { readAlerts, plainText, parseHiringCafe, slugCandidates, snippetExclusion, imap, imapDate };
+module.exports = { readAlerts, plainText, parseHiringCafe, parseLinkedIn, slugCandidates, snippetExclusion, imap, imapDate };
