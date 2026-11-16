@@ -201,8 +201,8 @@ function sendRunMail({ matches, loaded, candidates, config }) {
   if (matches.length) {
     sendMail(config.mail, matchMail(numbered, list), STATE_DIR);
     log(`Mail mit ${matches.length} Treffer(n) verschickt.`);
-  } else if (new Date(lastMail).toDateString() !== new Date().toDateString()) {
-    // Erster Lauf des Tages ohne Treffer: Lebenszeichen statt Funkstille.
+  } else if (scored.some((record) => record.score >= config.listMinScore) || new Date(lastMail).toDateString() !== new Date().toDateString()) {
+    // Neue Stellen zum Anfordern sofort melden, sonst einmal am Tag ein Lebenszeichen statt Funkstille.
     sendMail(config.mail, statusMail({ loaded, candidates, ...list }), STATE_DIR);
     log(`Statusmail verschickt (${scored.length} bewertet seit der letzten Mail).`);
   } else {

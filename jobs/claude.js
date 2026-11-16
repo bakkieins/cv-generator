@@ -11,22 +11,29 @@ function renderPrompt(name, values) {
 }
 
 function runClaude({ prompt, model, budget, schema, tools, disallowedTools, permissionMode, agent }) {
-  const output = execFileSync(
-    "claude",
-    [
-      "-p", prompt,
-      ...(agent ? ["--agent", agent] : []),
-      "--model", model,
-      "--output-format", "json",
-      "--json-schema", JSON.stringify(schema),
-      "--max-budget-usd", String(budget),
-      "--no-session-persistence",
-      "--allowedTools", ...tools,
-      ...(disallowedTools?.length ? ["--disallowedTools", ...disallowedTools] : []),
-      ...(permissionMode ? ["--permission-mode", permissionMode] : []),
-    ],
-    { cwd: ROOT, encoding: "utf8", maxBuffer: 50 * 1024 * 1024, timeout: 30 * 60 * 1000 },
-  );
+  let output;
+  try {
+    output = execFileSync(
+      "claude",
+      [
+        "-p", prompt,
+        ...(agent ? ["--agent", agent] : []),
+        "--model", model,
+        "--output-format", "json",
+        "--json-schema", JSON.stringify(schema),
+        "--max-budget-usd", String(budget),
+        "--no-session-persistence",
+        "--allowedTools", ...tools,
+        ...(disallowedTools?.length ? ["--disallowedTools", ...disallowedTools] : []),
+        ...(permissionMode ? ["--permission-mode", permissionMode] : []),
+      ],
+      { cwd: ROOT, encoding: "utf8", maxBuffer: 50 * 1024 * 1024, timeout: 30 * 60 * 1000 },
+    );
+  } catch (error) {
+    // Meldung ohne den Prompt, der sonst den Log füllt und die eigentliche Ursache verdeckt.
+    const detail = [error.stderr, error.stdout].map((text) => String(text ?? "").trim()).filter(Boolean).join(" | ");
+    throw new Error(`claude beendet (${error.status ?? error.signal ?? error.code}): ${detail.slice(0, 500) || "keine Ausgabe"}`);
+  }
   const result = JSON.parse(output);
   if (result.is_error || !result.structured_output) {
     throw new Error(`claude returned ${result.subtype}: ${String(result.result).slice(0, 300)}`);
