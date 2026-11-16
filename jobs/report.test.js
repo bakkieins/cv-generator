@@ -56,7 +56,7 @@ test("Stellen unter der Schwelle stehen mit Nummer in der Mail, die drei besten 
   assert.deepEqual([...mail.text.matchAll(/^ {2}J(\d+) · (\d+) ·/gm)].map((m) => Number(m[2])), [66, 60, 55, 50]);
   assert.match(mail.text, /auf diese Mail antworten.*„J12“/);
 
-  const withMatch = matchMail([{ ...match("Acme", { status: "ready" }), ref: 7 }], [], { scored, threshold: 75, listMinScore: 60 });
+  const withMatch = matchMail([{ ...match("Acme", { status: "ready" }), ref: 7 }], { scored, threshold: 75, listMinScore: 60 });
   assert.match(withMatch.text, /■ J7 · Acme/);
   assert.match(withMatch.text, /Unter der Schwelle 75 \(6 bewertet/);
   assert.deepEqual([...withMatch.text.matchAll(/^ {2}J\d+ · (\d+) ·/gm)].map((m) => Number(m[1])), [66, 60, 55]);

@@ -123,11 +123,10 @@ async function main() {
   if (REPLIES_ONLY) return;
   const alerts = await readAlertsSafely(config);
   const lookup = await lookupAlertsSafely(alertsToCheck(alerts.unresolved, config, seen), config);
-  const toCheck = lookup.notFound;
   if (alerts.mails || lookup.searched) {
     log(`Alert-Mails: ${alerts.mails}, davon ${alerts.jobs.length} Stellen auf bekannten Boards gefunden. ` +
-      `Websuche: ${lookup.found} von ${lookup.searched} gefunden ($${lookup.costUSD.toFixed(2)}), ${toCheck.length} zum Selbstprüfen` +
-      `${lookup.pending.length ? `, ${lookup.pending.length} warten auf den nächsten Lauf` : ""}.`);
+      `Websuche: ${lookup.found} von ${lookup.searched} gefunden ($${lookup.costUSD.toFixed(2)}), ` +
+      `${lookup.dropped.length} nach zwei Versuchen verworfen, ${lookup.pending.length} warten.`);
   }
   const { unique, candidates } = prefilter([...(await fetchAll(config.sources)), ...alerts.jobs, ...lookup.jobs], config, seen);
   log(`${unique.length} Stellen geladen, ${candidates.length} neue Kandidaten nach Vorfilter.`);
@@ -135,7 +134,6 @@ async function main() {
 
   if (DRY_RUN) {
     for (const job of candidates) console.log(`- ${job.company} · ${job.title} · ${job.location} · ${job.url}`);
-    for (const entry of toCheck) console.log(`? ${entry.company} · ${entry.title} · ${entry.location} · ${entry.url}`);
     for (const entry of lookup.pending) console.log(`… ${entry.company} · ${entry.title} (Websuche im nächsten echten Lauf)`);
     return;
   }
@@ -187,11 +185,11 @@ async function main() {
   writeJson(CANDIDATES_PATH, keepRecent(candidatesStore));
   if (!mailing) return;
 
-  sendRunMail({ matches, toCheck, loaded: unique.length, candidates: candidates.length, config });
+  sendRunMail({ matches, loaded: unique.length, candidates: candidates.length, config });
   alerts.commit();
 }
 
-function sendRunMail({ matches, toCheck, loaded, candidates, config }) {
+function sendRunMail({ matches, loaded, candidates, config }) {
   const lastMail = fs.existsSync(LAST_MAIL_PATH) ? Number(fs.readFileSync(LAST_MAIL_PATH, "utf8")) : Date.now() - 24 * 60 * 60 * 1000;
   // Stellen über der Schwelle waren schon in einer Treffer-Mail oder kommen im nächsten Lauf.
   const requests = readRequests();
@@ -201,12 +199,12 @@ function sendRunMail({ matches, toCheck, loaded, candidates, config }) {
   const numbered = matches.map((match) => ({ ...match, ref: assignRef(requests, { ...match.job, score: match.result.score }) }));
   const list = { scored, threshold: config.threshold, listMinScore: config.listMinScore };
   if (matches.length) {
-    sendMail(config.mail, matchMail(numbered, toCheck, list), STATE_DIR);
+    sendMail(config.mail, matchMail(numbered, list), STATE_DIR);
     log(`Mail mit ${matches.length} Treffer(n) verschickt.`);
-  } else if (toCheck.length || new Date(lastMail).toDateString() !== new Date().toDateString()) {
+  } else if (new Date(lastMail).toDateString() !== new Date().toDateString()) {
     // Erster Lauf des Tages ohne Treffer: Lebenszeichen statt Funkstille.
-    sendMail(config.mail, statusMail({ loaded, candidates, ...list, alerts: toCheck }), STATE_DIR);
-    log(`Statusmail verschickt (${scored.length} bewertet seit der letzten Mail, ${toCheck.length} zum Selbstprüfen).`);
+    sendMail(config.mail, statusMail({ loaded, candidates, ...list }), STATE_DIR);
+    log(`Statusmail verschickt (${scored.length} bewertet seit der letzten Mail).`);
   } else {
     return;
   }
@@ -351,7 +349,7 @@ async function lookupAlertsSafely(entries, config) {
     return await lookupAlerts(entries, config, STATE_DIR, { search: !DRY_RUN && !SCORE_ONLY });
   } catch (error) {
     log(`⚠ Websuche nach Alert-Stellen fehlgeschlagen: ${error.message}`);
-    return { jobs: [], notFound: entries, pending: [], deferred: new Set(), searched: 0, found: 0, costUSD: 0 };
+    return { jobs: [], pending: [], dropped: entries, deferred: new Set(), searched: 0, found: 0, costUSD: 0 };
   }
 }
 

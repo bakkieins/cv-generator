@@ -31,25 +31,32 @@ test("Treffer werden zur normalen Stelle mit stabilem Schlüssel", () => {
   assert.equal(job.source, "web");
 });
 
-test("Ohne Suche (Testlauf) warten neue Stellen, frühere Treffer kommen zurück, Fehlschläge gehen in die Liste", async () => {
+test("Ohne Fund ein zweiter Versuch am nächsten Tag, danach verworfen; Treffer kommen aus dem Speicher zurück", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lookup-"));
   const now = Date.parse("2026-11-16T07:00:00.000Z");
-  const at = new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString();
+  const hoursAgo = (h) => new Date(now - h * 60 * 60 * 1000).toISOString();
   const found = { ...entry, title: "Product Manager, Payments" };
-  const missed = { ...entry, title: "Product Manager, Platform" };
+  const once = { ...entry, title: "Product Manager, Platform" };
+  const recent = { ...entry, title: "Product Manager, APIs" };
+  const twice = { ...entry, title: "Product Manager, Pricing" };
   fs.writeFileSync(path.join(dir, "lookups.json"), JSON.stringify({
     results: {
-      "examplecorp:productmanagerpayments": { at, found: true, entry: found, job: toJob(found, { url: "https://jobs.example.com/2", description: text }, at) },
-      "examplecorp:productmanagerplatform": { at, found: false, entry: missed, reason: "nur Übersicht gefunden" },
+      "examplecorp:productmanagerpayments": { at: hoursAgo(48), found: true, entry: found, job: toJob(found, { url: "https://jobs.example.com/2", description: text }, hoursAgo(48)) },
+      "examplecorp:productmanagerplatform": { at: hoursAgo(24), found: false, attempts: 1, entry: once, reason: "noch nicht indexiert" },
+      "examplecorp:productmanagerapis": { at: hoursAgo(2), found: false, attempts: 1, entry: recent, reason: "noch nicht indexiert" },
+      "examplecorp:productmanagerpricing": { at: hoursAgo(30), found: false, attempts: 2, entry: twice, reason: "nur Aggregator" },
     },
-    pending: [],
+    pending: [once, recent],
   }));
 
-  const result = await lookupAlerts([entry, found, missed], config, dir, { search: false, now });
+  // Testlauf ohne Suche: Zweitversuch und neue Stelle warten, der Treffer kommt zurück, der zweite Fehlschlag fällt raus.
+  const result = await lookupAlerts([entry, twice], config, dir, { search: false, now });
   assert.deepEqual(result.jobs.map((job) => job.url), ["https://jobs.example.com/2"]);
-  assert.deepEqual(result.notFound.map((e) => e.lookup), ["nur Übersicht gefunden"]);
-  assert.deepEqual(result.pending.map((e) => e.title), [entry.title]);
+  assert.deepEqual(result.dropped.map((e) => e.title), [twice.title]);
+  assert.deepEqual(result.pending.map((e) => e.title).sort(), [entry.title, once.title, recent.title].sort());
   assert.equal(result.searched, 0);
-  // Wartende und gefundene Stellen dürfen nicht als gesehen markiert werden, der Fehlschlag schon.
-  assert.deepEqual([...result.deferred].sort(), ["examplecorp:productmanagerpayments", "examplecorp:seniorproductmanagerbilling"]);
+  // Wartende und gefundene Stellen dürfen nicht als gesehen markiert werden, verworfene schon.
+  assert.equal(result.deferred.has("examplecorp:productmanagerpricing"), false);
+  assert.equal(result.deferred.has("examplecorp:productmanagerpayments"), true);
+  assert.equal(result.deferred.has("examplecorp:seniorproductmanagerbilling"), true);
 });

@@ -128,3 +128,12 @@ test("LinkedIn-Alert ergibt je Stelle Titel, Firma, Ort, Suche und einen Link oh
   assert.equal(second.location, "Deutschland");
   assert.equal(rest.length, 0);
 });
+
+test("LinkedIn-Bestätigung einer neuen Suche ergibt keine Stellen", () => {
+  const text = [
+    "Ihre Jobbenachrichtigung wurde erstellt: (\"product manager\" OR \"product lead\") AND (API) in Europäische Union.",
+    "Wir benachrichtigen Sie bei neuen Jobangeboten, die zu Ihren Suchkriterien passen.",
+    "Jobangebot ansehen: https://www.linkedin.com/comm/jobs/search?keywords=api",
+  ].join("\n");
+  assert.deepEqual(parseLinkedIn(text), []);
+});

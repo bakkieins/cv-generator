@@ -1,5 +1,6 @@
 // Zweite Stufe für Alert-Stellen, die auf keinem bekannten ATS-Board stehen: Claude sucht die Originalanzeige
 // per Websuche auf der Karriereseite der Firma. Gefundene Stellen laufen durch die normale Bewertung.
+// Ohne Fund ein zweiter Versuch am nächsten Tag (neue Anzeigen sind oft noch nicht indexiert), danach verworfen.
 const fs = require("node:fs");
 const path = require("node:path");
 const { renderPrompt, runClaude, LOOKUP_SCHEMA } = require("./claude");
@@ -12,9 +13,10 @@ const BLOCKED_DOMAINS = [
   "stepstone.de", "ziprecruiter.com", "builtin.com", "wellfound.com", "monster.com", "monster.de", "xing.com",
 ];
 const DISALLOWED_TOOLS = BLOCKED_DOMAINS.flatMap((domain) => ["", "www.", "de."].map((sub) => `WebFetch(domain:${sub}${domain})`));
-// Nicht gefundene Stellen nach dieser Zeit erneut suchen, falls dieselbe Stelle wieder in einer Alert-Mail auftaucht.
-const RETRY_NOT_FOUND_DAYS = 7;
-const DAY = 24 * 60 * 60 * 1000;
+const MAX_ATTEMPTS = 2;
+const RETRY_AFTER_HOURS = 20;
+const HOUR = 60 * 60 * 1000;
+const DAY = 24 * HOUR;
 
 function isBlocked(url) {
   try {
@@ -51,8 +53,8 @@ function readState(statePath) {
   return fs.existsSync(statePath) ? { ...empty, ...JSON.parse(fs.readFileSync(statePath, "utf8")) } : empty;
 }
 
-// `entries`: neue Alert-Stellen nach Vorfilter. Liefert die Treffer (auch aus früheren Läufen, solange jung genug)
-// und die Stellen ohne Treffer für die Liste zum Selbstprüfen. `search: false` nur den Speicher lesen (Testlauf).
+// `entries`: neue Alert-Stellen nach Vorfilter. Liefert die Treffer (auch aus früheren Läufen, solange jung genug),
+// die wartenden und die endgültig verworfenen Stellen. `search: false` liest nur den Speicher (Testlauf).
 async function lookupAlerts(entries, config, stateDir, { search = true, now = Date.now() } = {}) {
   const statePath = path.join(stateDir, "lookups.json");
   const state = readState(statePath);
@@ -61,8 +63,8 @@ async function lookupAlerts(entries, config, stateDir, { search = true, now = Da
   // Plattform- und Monetarisierungs-Titel zuerst, falls das Limit greift.
   const queue = [...new Map([...state.pending, ...entries].map((entry) => [titleKey(entry), entry])).values()]
     .sort((a, b) => FOCUS_TITLE.test(b.title) - FOCUS_TITLE.test(a.title));
-  const notFound = [];
   const pending = [];
+  const dropped = [];
   let searched = 0;
   let found = 0;
   let costUSD = 0;
@@ -71,11 +73,13 @@ async function lookupAlerts(entries, config, stateDir, { search = true, now = Da
     const key = titleKey(entry);
     const known = state.results[key];
     if (known?.found) continue;
-    if (known && now - Date.parse(known.at) < RETRY_NOT_FOUND_DAYS * DAY) {
-      notFound.push({ ...entry, lookup: known.reason });
+    const attempts = known?.attempts ?? 0;
+    if (attempts >= MAX_ATTEMPTS) {
+      dropped.push({ ...entry, lookup: known.reason });
       continue;
     }
-    if (!search || searched >= config.maxLookupsPerRun) {
+    const waiting = known && now - Date.parse(known.at) < RETRY_AFTER_HOURS * HOUR;
+    if (waiting || !search || searched >= config.maxLookupsPerRun) {
       pending.push(entry);
       continue;
     }
@@ -91,7 +95,7 @@ async function lookupAlerts(entries, config, stateDir, { search = true, now = Da
         disallowedTools: DISALLOWED_TOOLS,
       });
     } catch (error) {
-      // Abgebrochene Suche (Budget, Netz) im nächsten Lauf wiederholen statt aufgeben.
+      // Abgebrochene Suche (Budget, Netz) zählt nicht als Versuch.
       log(`⚠ Websuche fehlgeschlagen für ${entry.company} · ${entry.title}: ${error.message.slice(0, 200)}`);
       pending.push(entry);
       continue;
@@ -104,15 +108,16 @@ async function lookupAlerts(entries, config, stateDir, { search = true, now = Da
       log(`  Websuche: ${entry.company} · ${entry.title} → ${result.url}`);
     } else {
       const reason = result.found ? "Fund verworfen (Jobbörse oder ohne Anzeigentext)" : result.reason;
-      state.results[key] = { at, found: false, entry, reason };
-      notFound.push({ ...entry, lookup: reason });
-      log(`  Websuche: ${entry.company} · ${entry.title} → nicht gefunden (${reason})`);
+      state.results[key] = { at, found: false, attempts: attempts + 1, entry, reason };
+      const final = attempts + 1 >= MAX_ATTEMPTS;
+      (final ? dropped : pending).push({ ...entry, lookup: reason });
+      log(`  Websuche: ${entry.company} · ${entry.title} → nicht gefunden, ${final ? "verworfen" : "neuer Versuch morgen"} (${reason})`);
     }
-    if (search) save();
+    save();
   }
 
-  // Alte Einträge aufräumen: Treffer nach maxAgeDays, Fehlschläge nach der Wiederholfrist.
-  const keepFor = Math.max(config.maxAgeDays, RETRY_NOT_FOUND_DAYS) * DAY;
+  // Alte Einträge aufräumen. Solange ein Eintrag besteht, wird dieselbe Stelle aus einer neuen Alert-Mail nicht erneut gesucht.
+  const keepFor = Math.max(config.maxAgeDays, 7) * DAY;
   state.results = Object.fromEntries(Object.entries(state.results).filter(([, record]) => now - Date.parse(record.at) < keepFor));
   state.pending = pending;
   if (search) save();
@@ -122,7 +127,7 @@ async function lookupAlerts(entries, config, stateDir, { search = true, now = Da
     .map((record) => record.job);
   // Gefundene und wartende Stellen nicht als gesehen markieren, sonst fallen sie im Vorfilter heraus.
   const deferred = new Set([...pending, ...Object.values(state.results).filter((r) => r.found).map((r) => r.entry)].map(titleKey));
-  return { jobs, notFound, pending, deferred, searched, found, costUSD };
+  return { jobs, pending, dropped, deferred, searched, found, costUSD };
 }
 
 module.exports = { lookupAlerts, isBlocked, toJob, validResult, BLOCKED_DOMAINS };

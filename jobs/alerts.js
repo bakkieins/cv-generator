@@ -71,6 +71,8 @@ function parseHiringCafe(text) {
 // Aufbau: Kopfzeile mit Suche und Ort, dann je Stelle Titel, Firma, Ort, optionale Hinweise und „Jobangebot ansehen: <Link>“.
 // Hinweise wie „aktiv auf Personalsuche“ sind keine Stellenbeschreibung und bleiben draußen.
 function parseLinkedIn(text) {
+  // Bestätigung einer neu angelegten Suche („Ihre Jobbenachrichtigung wurde erstellt“) enthält keine Stellen.
+  if (/Jobbenachrichtigung wurde erstellt|job alert (has been|was) created/i.test(text)) return [];
   const entries = [];
   let search = "";
   let block = [];
@@ -186,7 +188,7 @@ async function directLink(url) {
   }
 }
 
-// Liefert die auf Karriereseiten gefundenen Stellen (laufen durch die normale Pipeline) und den Rest zum Selbstprüfen.
+// Liefert die auf bekannten Boards gefundenen Stellen (laufen durch die normale Pipeline) und den Rest für die Websuche (lookup.js).
 // `commit` erst nach dem Mailversand aufrufen, damit eine Mail bei einem Absturz im nächsten Lauf erneut gelesen wird.
 async function readAlerts(config, stateDir) {
   const statePath = path.join(stateDir, "alerts.json");
