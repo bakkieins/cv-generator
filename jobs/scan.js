@@ -5,6 +5,7 @@ const { fetchSource, loadDescription } = require("./sources");
 const { sendMail } = require("./mail");
 const { prefilter, matchesCompany, passesTitle, passesLocation, titleKey } = require("./filter");
 const { readAlerts, snippetExclusion } = require("./alerts");
+const { lookupAlerts } = require("./lookup");
 const { readReplies, pickJobs } = require("./replies");
 const { scoreJob, tailorAndReview } = require("./pipeline");
 const { slugify, writeJobFile } = require("./dossier");
@@ -121,17 +122,21 @@ async function main() {
   if (!DRY_RUN && !SCORE_ONLY) handleReplies(config, seen, candidatesStore);
   if (REPLIES_ONLY) return;
   const alerts = await readAlertsSafely(config);
-  const { unique, candidates } = prefilter([...(await fetchAll(config.sources)), ...alerts.jobs], config, seen);
+  const lookup = await lookupAlertsSafely(alertsToCheck(alerts.unresolved, config, seen), config);
+  const toCheck = lookup.notFound;
+  if (alerts.mails || lookup.searched) {
+    log(`Alert-Mails: ${alerts.mails}, davon ${alerts.jobs.length} Stellen auf bekannten Boards gefunden. ` +
+      `Websuche: ${lookup.found} von ${lookup.searched} gefunden ($${lookup.costUSD.toFixed(2)}), ${toCheck.length} zum Selbstprüfen` +
+      `${lookup.pending.length ? `, ${lookup.pending.length} warten auf den nächsten Lauf` : ""}.`);
+  }
+  const { unique, candidates } = prefilter([...(await fetchAll(config.sources)), ...alerts.jobs, ...lookup.jobs], config, seen);
   log(`${unique.length} Stellen geladen, ${candidates.length} neue Kandidaten nach Vorfilter.`);
   if (!DRY_RUN && !SCORE_ONLY) writeJson(LAST_SCAN_PATH, { at: new Date().toISOString(), loaded: unique.length, candidates: candidates.length });
-  const toCheck = alertsToCheck(alerts.unresolved, config, seen);
-  if (alerts.mails) {
-    log(`Alert-Mails: ${alerts.mails}, davon ${alerts.jobs.length} Stellen auf Karriereseiten gefunden, ${toCheck.length} zum Selbstprüfen.`);
-  }
 
   if (DRY_RUN) {
     for (const job of candidates) console.log(`- ${job.company} · ${job.title} · ${job.location} · ${job.url}`);
     for (const entry of toCheck) console.log(`? ${entry.company} · ${entry.title} · ${entry.location} · ${entry.url}`);
+    for (const entry of lookup.pending) console.log(`… ${entry.company} · ${entry.title} (Websuche im nächsten echten Lauf)`);
     return;
   }
 
@@ -176,7 +181,7 @@ async function main() {
   // Ohne Mail bleiben Alert-Mails ungelesen, damit ihre Liste im nächsten Lauf nicht verloren ist.
   const mailing = config.mail && !NO_MAIL;
   if (mailing) {
-    for (const entry of alerts.unresolved) seen[alertKey(entry)] = { key: alertKey(entry), titleKey: titleKey(entry), company: entry.company, title: entry.title, url: entry.url, at: new Date().toISOString() };
+    for (const entry of alerts.unresolved.filter((e) => !lookup.deferred.has(titleKey(e)))) seen[alertKey(entry)] = { key: alertKey(entry), titleKey: titleKey(entry), company: entry.company, title: entry.title, url: entry.url, at: new Date().toISOString() };
   }
   writeJson(SEEN_PATH, seen);
   writeJson(CANDIDATES_PATH, keepRecent(candidatesStore));
@@ -337,6 +342,16 @@ async function readAlertsSafely(config) {
   } catch (error) {
     log(`⚠ Alert-Mails nicht gelesen: ${error.message}`);
     return NO_ALERTS;
+  }
+}
+
+// Die Websuche kostet Geld und läuft deshalb nicht im Testlauf. Ein Fehler darf den Lauf nicht stoppen.
+async function lookupAlertsSafely(entries, config) {
+  try {
+    return await lookupAlerts(entries, config, STATE_DIR, { search: !DRY_RUN && !SCORE_ONLY });
+  } catch (error) {
+    log(`⚠ Websuche nach Alert-Stellen fehlgeschlagen: ${error.message}`);
+    return { jobs: [], notFound: entries, pending: [], deferred: new Set(), searched: 0, found: 0, costUSD: 0 };
   }
 }
 

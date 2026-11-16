@@ -31,7 +31,7 @@ function matchBlock({ ref, job, result, tailor, review, flagged }) {
   ].filter(Boolean).join("\n");
 }
 
-// Stellen aus Alert-Mails ohne auffindbare Originalanzeige: nur zum Selbstprüfen, kein Score, kein CV.
+// Stellen aus Alert-Mails, deren Originalanzeige auch die Websuche nicht fand: nur zum Selbstprüfen, kein Score, kein CV.
 function alertSection(entries) {
   if (!entries.length) return "";
   const block = (e) => [
@@ -39,8 +39,9 @@ function alertSection(entries) {
     `  Ort: ${e.location || "keine Angabe"}${e.salary ? ` · Gehalt: ${e.salary}` : ""}`,
     e.summary ? `  Anforderungen: ${e.summary}` : null,
     `  Link: ${e.url} (${e.via}, Suche „${e.search}“)`,
+    e.lookup ? `  Websuche: ${e.lookup}` : null,
   ].filter(Boolean).join("\n");
-  return `\nAus Alert-Mails, Originalanzeige auf keiner bekannten Karriereseite gefunden (${entries.length}). Ohne Score und ohne CV, bitte selbst prüfen:\n\n${entries.map(block).join("\n\n")}\n`;
+  return `\nAus Alert-Mails, Originalanzeige weder auf bekannten Boards noch per Websuche gefunden (${entries.length}). Ohne Score und ohne CV, bitte selbst prüfen:\n\n${entries.map(block).join("\n\n")}\n`;
 }
 
 // Bewertete Stellen unter der Schwelle, mit Nummer zum Anfordern eines CV. Mindestens die drei besten,

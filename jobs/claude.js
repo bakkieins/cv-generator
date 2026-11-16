@@ -10,7 +10,7 @@ function renderPrompt(name, values) {
   return template.replace(/{{(\w+)}}/g, (_, key) => values[key] ?? "");
 }
 
-function runClaude({ prompt, model, budget, schema, tools, permissionMode, agent }) {
+function runClaude({ prompt, model, budget, schema, tools, disallowedTools, permissionMode, agent }) {
   const output = execFileSync(
     "claude",
     [
@@ -22,6 +22,7 @@ function runClaude({ prompt, model, budget, schema, tools, permissionMode, agent
       "--max-budget-usd", String(budget),
       "--no-session-persistence",
       "--allowedTools", ...tools,
+      ...(disallowedTools?.length ? ["--disallowedTools", ...disallowedTools] : []),
       ...(permissionMode ? ["--permission-mode", permissionMode] : []),
     ],
     { cwd: ROOT, encoding: "utf8", maxBuffer: 50 * 1024 * 1024, timeout: 30 * 60 * 1000 },
@@ -99,4 +100,19 @@ const REVIEW_SCHEMA = {
   required: ["release", "blocking", "review", "openQuestions"],
 };
 
-module.exports = { renderPrompt, runClaude, SCORE_SCHEMA, TAILOR_SCHEMA, REVIEW_SCHEMA };
+const LOOKUP_SCHEMA = {
+  type: "object",
+  properties: {
+    found: { type: "boolean" },
+    url: { type: "string" },
+    title: { type: "string" },
+    location: { type: "string" },
+    salary: { type: "string" },
+    postedAt: { type: "string" },
+    description: { type: "string" },
+    reason: { type: "string" },
+  },
+  required: ["found", "reason"],
+};
+
+module.exports = { renderPrompt, runClaude, SCORE_SCHEMA, TAILOR_SCHEMA, REVIEW_SCHEMA, LOOKUP_SCHEMA };

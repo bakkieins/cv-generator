@@ -4,7 +4,7 @@ Scannt zu festen Zeiten (Mo–Sa 07:30, Mo–Fr zusätzlich 13:30 und 21:30, So 
 
 ## Ablauf
 
-1. `sources.js` lädt alle Feeds aus `private/jobs.config.js`. `alerts.js` liest dazu neue Alert-Mails (hiring.cafe, LinkedIn) per IMAP aus dem Scanner-Postfach und sucht jede Stelle per Firmenname auf Greenhouse, Ashby, Lever und SmartRecruiters. Gefundene Stellen laufen durch denselben Ablauf. Der Rest kommt ohne Score als Liste zum Selbstprüfen in die Mail, nach Titel- und Ortsfilter und ohne klare Ausschlüsse aus der Kurzbeschreibung (Gehaltsband unter der Untergrenze, Junior, private Ausschlussmuster). Die Jobbörse selbst wird nie aufgerufen.
+1. `sources.js` lädt alle Feeds aus `private/jobs.config.js`. `alerts.js` liest dazu neue Alert-Mails (hiring.cafe, LinkedIn) per IMAP aus dem Scanner-Postfach und sucht jede Stelle per Firmenname auf Greenhouse, Ashby, Lever und SmartRecruiters. Was dort fehlt (oft Workday, SuccessFactors oder eigene Karriereseiten), sucht `lookup.js` per Websuche: Claude findet und prüft die Originalanzeige auf der Karriereseite der Firma, höchstens `maxLookupsPerRun` pro Lauf, der Rest wartet. Gefundene Stellen laufen durch denselben Ablauf. Erst was auch die Websuche nicht findet, kommt ohne Score als Liste zum Selbstprüfen in die Mail, nach Titel- und Ortsfilter und ohne klare Ausschlüsse aus der Kurzbeschreibung (Gehaltsband unter der Untergrenze, Junior, private Ausschlussmuster). Die Jobbörse selbst wird nie aufgerufen.
 2. Vorfilter ohne KI (`filter.js`, Tests mit `npm test`): Titel, Region, Alter, verworfene Firmen aus `CLAUDE.local.md`, schon gesehene Stellen. Plattform- und API-Stellen werden zuerst bewertet, damit sie nicht am Limit pro Lauf hängen bleiben.
 3. `prompts/score.md`: Bewertung mit Sonnet. Nur Rolle (40) und Skills (60) zählen, der Standort nicht. Knockouts aus der privaten Konfiguration ergeben 0.
 4. Ab der Schwelle: `applications/<slug>/job.md` anlegen, dann `prompts/tailor.md` mit Opus (data.js, Build, Lint). Scheitert der Build an Seitenzahl oder Lint, folgt eine Rettungsrunde mit `prompts/fix.md`.
@@ -20,6 +20,7 @@ Scannt zu festen Zeiten (Mo–Sa 07:30, Mo–Fr zusätzlich 13:30 und 21:30, So 
 | `sources.js` | Feeds der ATS und Jobbörsen |
 | `filter.js` | Vorfilter ohne KI |
 | `alerts.js` | Alert-Mails per IMAP, Parser je Absender, Suche der Originalanzeige |
+| `lookup.js` | Websuche nach der Originalanzeige für Alert-Stellen ohne bekanntes Board, Jobbörsen gesperrt |
 | `replies.js` | Antworten auf Scanner-Mails per IMAP, Stellennummern und Signatur prüfen |
 | `pipeline.js` | Claude-Schritte: Bewerten, Tailoring, Rettungsrunde, Review, Korrektur |
 | `claude.js` | Aufruf von `claude -p`, Prompt-Vorlagen, JSON-Schemas |
@@ -39,4 +40,4 @@ jobs/install-launchd.sh                  # zu festen Uhrzeiten einplanen, Antwor
 jobs/install-launchd.sh uninstall
 ```
 
-State und Log liegen in `private/jobs-state/` (`seen.json`, `scores.jsonl` zum Justieren der Schwelle, `alerts.json` mit verarbeiteten Mails und gefundenen Boards je Firma, `requests.json` mit Stellennummern und Warteschlange, `candidates.json` mit den Score-Ergebnissen der letzten 60 Tage, `scan.log`).
+State und Log liegen in `private/jobs-state/` (`seen.json`, `scores.jsonl` zum Justieren der Schwelle, `alerts.json` mit verarbeiteten Mails und gefundenen Boards je Firma, `lookups.json` mit Ergebnissen und Warteschlange der Websuche, `requests.json` mit Stellennummern und Warteschlange, `candidates.json` mit den Score-Ergebnissen der letzten 60 Tage, `scan.log`).

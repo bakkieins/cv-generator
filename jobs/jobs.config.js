@@ -16,9 +16,12 @@ module.exports = {
   locationPolicy: "Standort, Arbeitsmodell und Gehalt fließen nicht in den Score ein.",
   knockoutRules: [],
   snippetKnockouts: [], // [{ pattern: /…/i, reason: "…" }]
-  models: { score: "sonnet", tailor: "opus", review: "opus" },
+  // Alert-Stellen ohne Treffer auf bekannten Boards: Websuche nach der Originalanzeige, höchstens so viele pro Lauf.
+  // Der Rest wartet auf den nächsten Lauf.
+  maxLookupsPerRun: 10,
+  models: { score: "sonnet", tailor: "opus", review: "opus", lookup: "sonnet" },
   maxFixRounds: 2,
-  budgetUSD: { score: 0.5, tailor: 4, review: 1.5 },
+  budgetUSD: { score: 0.5, tailor: 4, review: 1.5, lookup: 0.6 },
 
   titleInclude: /product manager|produktmanager|product lead|head of product|product owner|product director|director,? (of )?product\b(?!\s+(design|legal|marketing|operations|analytics))|\bpm\b/i,
   // Wortgrenzen, damit „Internal Platform", „Salesforce" und „Platform Engineering" nicht rausfallen.
